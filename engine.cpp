@@ -56,11 +56,10 @@ DriverMonitoring::DriverMonitoring(const std::string& engineFileName): mEngine(n
 
     // std::unique_ptr<nvinfer1::IRuntime> runtime{nvinfer1::createInferRuntime(logger)}; 
     nvinfer1::IRuntime* runtime = nvinfer1::createInferRuntime(logger);
-    // mEngine.reset(runtime->deserializeCudaEngine(engineData.data(), fsize, nullptr)); 
+    mEngine.reset(runtime->deserializeCudaEngine(engineData.data(), fsize, nullptr)); 
+    assert(mEngine.get() != nullptr); 
 
-    // assert(mEngine.get() != nullptr); 
-
-
+    std::cout << "driver monitoring object has been initialized successfuly!\n";
 }
 
 
