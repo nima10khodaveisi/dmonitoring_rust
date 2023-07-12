@@ -3,11 +3,20 @@
 #include <vector>
 #include <memory>
 #include <cassert>
+#include <cstring>
+
+// #include <opencv2/opencv.hpp>
+#include "opencv2/imgcodecs.hpp"
+#include <opencv2/opencv.hpp>
 
 #include "NvInfer.h"
 
 using namespace std; 
 using namespace nvinfer1; 
+
+
+const int MODEL_WIDTH = 1440; 
+const int MODEL_HEIGHT = 960; 
 
 
 // I copied this from https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#c_topics
@@ -27,7 +36,8 @@ class Logger : public ILogger
 
 class DriverMonitoring { 
     public: 
-        DriverMonitoring(const std::string& engineFileName); 
+        DriverMonitoring(const std::string& engineFilename);
+        void infer(const std::string& inputFile);
 
     private:
         std::string mEngineFilename;
@@ -37,13 +47,13 @@ class DriverMonitoring {
 }; 
 
 
-DriverMonitoring::DriverMonitoring(const std::string& engineFileName): mEngine(nullptr) { 
-    std::ifstream engineFile(engineFileName, std::ios::binary); 
+DriverMonitoring::DriverMonitoring(const std::string& engineFilename): mEngine(nullptr) { 
+    std::ifstream engineFile(engineFilename, std::ios::binary); 
     if (engineFile.fail()) { 
         return; 
     }        
     
-    this->mEngineFilename = engineFileName; 
+    this->mEngineFilename = engineFilename; 
 
     engineFile.seekg(0, std::ifstream::end); 
     auto fsize = engineFile.tellg(); 
@@ -54,7 +64,7 @@ DriverMonitoring::DriverMonitoring(const std::string& engineFileName): mEngine(n
 
     std::cout << "This is the size of engine file: " << fsize << " " << engineData.size() << endl; 
 
-    // std::unique_ptr<nvinfer1::IRuntime> runtime{nvinfer1::createInferRuntime(logger)}; 
+    // std::unique_ptr<nvinfer1::IRuntime> runtiسme{nvinfer1::createInferRuntime(logger)}; 
     nvinfer1::IRuntime* runtime = nvinfer1::createInferRuntime(logger);
     mEngine.reset(runtime->deserializeCudaEngine(engineData.data(), fsize, nullptr)); 
     assert(mEngine.get() != nullptr); 
@@ -63,8 +73,55 @@ DriverMonitoring::DriverMonitoring(const std::string& engineFileName): mEngine(n
 }
 
 
+void DriverMonitoring::infer(const std::string& inputFilename) { 
+    auto context = std::unique_ptr<nvinfer1::IExecutionContext>(mEngine->createExecutionContext()); 
+
+    if (!context) { 
+        return; 
+    }
+    cout << "Context has been created!\n";
+
+    auto input_img_idx = mEngine->getBindingIndex("input_img"); 
+    if (input_img_idx == -1) { 
+        return; 
+    }
+    cout << "This is input image index " << input_img_idx <<  '\n';
+
+    assert(mEngine->getBindingDataType(input_img_idx) == nvinfer1::DataType::kFLOAT);
+
+    cv::Mat rgbImage = cv::imread(inputFilename, cv::IMREAD_COLOR); 
+    if (rgbImage.empty()) {
+        return; 
+    }
+
+    try { 
+        cv::resize(rgbImage, rgbImage.clone(), rgbImage.size(), cv::INTER_AREA);
+    } catch(cv::Exception& e) { 
+        const char* err_msg = e.what();
+        std::cout << "exception caught: " << err_msg << std::endl;
+    }
+
+    cout << "RGB image is fine " << rgbImage.size().width << ' ' << rgbImage.size().height << ' ' << rgbImage.channels() << endl; 
+
+    cv::Mat yuvImage; 
+    cv::cvtColor(rgbImage, yuvImage, cv::COLOR_BGR2YUV_I420); 
+ 
+    cout << "YUV image data " << yuvImage.size().width << ' ' << yuvImage.size().height << ' ' << yuvImage.channels() << endl; 
+ 
+    int bufferSize = MODEL_HEIGHT * MODEL_WIDTH;
+    unsigned char* buffer = new unsigned char[bufferSize]; 
+
+    std::memcpy(buffer, yuvImage.data, bufferSize); 
+
+    cout << "Assigned buffer " << bufferSize << ' ' << yuvImage.total() << '\n';
+
+
+}
+
+
 
 
 int main() { 
     DriverMonitoring dm = DriverMonitoring("dmonitoring_model.engine"); 
+    dm.infer("test.jpg");
 }
