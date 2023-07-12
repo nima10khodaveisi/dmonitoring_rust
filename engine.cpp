@@ -94,12 +94,12 @@ void DriverMonitoring::infer(const std::string& inputFilename) {
         return; 
     }
 
-    try { 
-        cv::resize(rgbImage, rgbImage.clone(), rgbImage.size(), cv::INTER_AREA);
-    } catch(cv::Exception& e) { 
-        const char* err_msg = e.what();
-        std::cout << "exception caught: " << err_msg << std::endl;
-    }
+    // try { 
+    //     cv::resize(rgbImage, rgbImage.clone(), rgbImage.size(), cv::INTER_NEAREST_EXACT);
+    // } catch(cv::Exception& e) { 
+    //     const char* err_msg = e.what();
+    //     std::cout << "exception caught: " << err_msg << std::endl;
+    // }
 
     cout << "RGB image is fine " << rgbImage.size().width << ' ' << rgbImage.size().height << ' ' << rgbImage.channels() << endl; 
 
