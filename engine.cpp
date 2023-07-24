@@ -94,27 +94,45 @@ void DriverMonitoring::infer(const std::string& inputFilename) {
         return; 
     }
 
-    // try { 
-    //     cv::resize(rgbImage, rgbImage.clone(), rgbImage.size(), cv::INTER_NEAREST_EXACT);
-    // } catch(cv::Exception& e) { 
-    //     const char* err_msg = e.what();
-    //     std::cout << "exception caught: " << err_msg << std::endl;
-    // }
-
     cout << "RGB image is fine " << rgbImage.size().width << ' ' << rgbImage.size().height << ' ' << rgbImage.channels() << endl; 
 
-    cv::Mat yuvImage; 
+     cv::Mat yuvImage; 
     cv::cvtColor(rgbImage, yuvImage, cv::COLOR_BGR2YUV_I420); 
- 
-    cout << "YUV image data " << yuvImage.size().width << ' ' << yuvImage.size().height << ' ' << yuvImage.channels() << endl; 
- 
-    int bufferSize = MODEL_HEIGHT * MODEL_WIDTH;
-    unsigned char* buffer = new unsigned char[bufferSize]; 
 
-    std::memcpy(buffer, yuvImage.data, bufferSize); 
+    // Yuv image data 
+    int width = yuvImage.size().width; 
+    int height = yuvImage.size().height;
+    int stride = 0; // This is because our picutre is completely inside the jpeg file
 
-    cout << "Assigned buffer " << bufferSize << ' ' << yuvImage.total() << '\n';
+    cout << "YUV image data " << width << ' ' << height << ' ' << yuvImage.channels() << endl; 
 
+    int streamBufferSize = width * height;
+    uint8_t* streamBuffer = new uint8_t[streamBufferSize]; 
+
+    std::memcpy(streamBuffer, yuvImage.data, streamBufferSize); 
+
+    FILE *sdump_yuv_file = fopen("rawdump_stream.yuv", "wb");
+    fwrite(streamBuffer, streamBufferSize, sizeof(uint8_t), sdump_yuv_file);
+    fclose(sdump_yuv_file);
+
+    cout << "Assigned buffer " << streamBufferSize << ' ' << yuvImage.total() << '\n';
+
+    int netBufferSize = MODEL_HEIGHT * MODEL_WIDTH; 
+    uint8_t* netBuffer = new uint8_t[netBufferSize];
+
+    int v_off = height - MODEL_HEIGHT;
+    int h_off = (width - MODEL_WIDTH) / 2;
+
+    for (int r = 0; r < MODEL_HEIGHT; ++r) { 
+        memcpy(netBuffer + r * MODEL_WIDTH, streamBuffer + r * stride + h_off, MODEL_WIDTH);
+    }
+
+    cout << "Resizing completed!" << endl; 
+    FILE *dump_yuv_file = fopen("rawdump.yuv", "wb");
+    fwrite(netBuffer, netBufferSize, sizeof(uint8_t), dump_yuv_file);
+    fclose(dump_yuv_file);
+
+    cout << "done" << endl; 
 
 }
 
