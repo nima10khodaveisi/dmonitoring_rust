@@ -4,12 +4,15 @@
 #include <memory>
 #include <cassert>
 #include <cstring>
+#include <algorithm>
+#include <numeric>
 
 // #include <opencv2/opencv.hpp>
 #include "opencv2/imgcodecs.hpp"
 #include <opencv2/opencv.hpp>
 
 #include "NvInfer.h"
+#include <cuda_runtime.h>
 
 using namespace std; 
 using namespace nvinfer1; 
@@ -72,22 +75,12 @@ DriverMonitoring::DriverMonitoring(const std::string& engineFilename): mEngine(n
     std::cout << "driver monitoring object has been initialized successfuly!\n";
 }
 
+float sigmoid(float x) { 
+    return 1 / (1 + exp(x));
+}
 
 void DriverMonitoring::infer(const std::string& inputFilename) { 
-    auto context = std::unique_ptr<nvinfer1::IExecutionContext>(mEngine->createExecutionContext()); 
-
-    if (!context) { 
-        return; 
-    }
-    cout << "Context has been created!\n";
-
-    auto input_img_idx = mEngine->getBindingIndex("input_img"); 
-    if (input_img_idx == -1) { 
-        return; 
-    }
-    cout << "This is input image index " << input_img_idx <<  '\n';
-
-    assert(mEngine->getBindingDataType(input_img_idx) == nvinfer1::DataType::kFLOAT);
+    // auto context = std::unique_ptr<nvinfer1::IExecutionContext>(mEngine->createExecutionContext()); 
 
     cv::Mat rgbImage = cv::imread(inputFilename, cv::IMREAD_COLOR); 
     if (rgbImage.empty()) {
@@ -96,15 +89,16 @@ void DriverMonitoring::infer(const std::string& inputFilename) {
 
     cout << "RGB image is fine " << rgbImage.size().width << ' ' << rgbImage.size().height << ' ' << rgbImage.channels() << endl; 
 
-     cv::Mat yuvImage; 
+    cv::Mat yuvImage; 
     cv::cvtColor(rgbImage, yuvImage, cv::COLOR_BGR2YUV_I420); 
 
     // Yuv image data 
     int width = yuvImage.size().width; 
     int height = yuvImage.size().height;
-    int stride = 0; // This is because our picutre is completely inside the jpeg file
+    int stride = width; // This is because our picutre is completely inside the jpeg file
 
     cout << "YUV image data " << width << ' ' << height << ' ' << yuvImage.channels() << endl; 
+    cout << "YUV desired size " << MODEL_WIDTH << ' ' << MODEL_HEIGHT << ' ' << yuvImage.channels() << endl; 
 
     int streamBufferSize = width * height;
     uint8_t* streamBuffer = new uint8_t[streamBufferSize]; 
@@ -122,9 +116,10 @@ void DriverMonitoring::infer(const std::string& inputFilename) {
 
     int v_off = height - MODEL_HEIGHT;
     int h_off = (width - MODEL_WIDTH) / 2;
+    cout << "h_off and v_off are " << h_off << ' ' << v_off << endl; 
 
     for (int r = 0; r < MODEL_HEIGHT; ++r) { 
-        memcpy(netBuffer + r * MODEL_WIDTH, streamBuffer + r * stride + h_off, MODEL_WIDTH);
+        memcpy(netBuffer + r * MODEL_WIDTH, streamBuffer + stride * v_off + r * stride + h_off, MODEL_WIDTH);
     }
 
     cout << "Resizing completed!" << endl; 
@@ -132,8 +127,91 @@ void DriverMonitoring::infer(const std::string& inputFilename) {
     fwrite(netBuffer, netBufferSize, sizeof(uint8_t), dump_yuv_file);
     fclose(dump_yuv_file);
 
-    cout << "done" << endl; 
+    // netBuffer is the pointer to the input for the model
+    auto input_img_index = mEngine->getBindingIndex("input_img"); 
+    if (input_img_index == -1) {
+        return; 
+    }
 
+    auto calib_index = mEngine->getBindingIndex("calib"); 
+    if (calib_index == -1) { 
+        return; 
+    }
+    
+    auto output_index = mEngine->getBindingIndex("outputs"); 
+    if (output_index == -1) { 
+        return; 
+    }
+
+
+    cout << "input_img_index and calib_index and output_index are " << input_img_index << ' ' << calib_index << ' ' << output_index << endl; 
+    float calib[] = {1.0, 2, 3};
+
+    void* input_img_mem{nullptr};
+    if (cudaMalloc(&input_img_mem, netBufferSize * sizeof(float)) != cudaSuccess) { 
+        cout << "Can not assign mem in cuda" << endl;
+        return; 
+    }
+    void* calib_mem{nullptr};
+    if (cudaMalloc(&calib_mem, sizeof(calib) * sizeof(float)) != cudaSuccess) { 
+        cout << "Can not assign mem in cuda" << endl;
+        return; 
+    }
+    cout << "Successfuly assigned mem to input in cuda" << endl; 
+
+    void* output_mem{nullptr}; 
+    auto outputDims = mEngine->getBindingDimensions(output_index);
+    auto outputSize = accumulate(outputDims.d, outputDims.d + outputDims.nbDims, 1, std::multiplies<int64_t>()) * sizeof(float); 
+    
+    if (cudaMalloc(&output_mem, outputSize) != cudaSuccess) { 
+        return; 
+    }
+    cout << "Successfuly assigned mem to output in cuda" << endl; 
+
+    cudaStream_t stream;
+    if (cudaStreamCreate(&stream) != cudaSuccess)
+    {
+        cout << "cuda stream creation failed." << std::endl;
+        return;
+    }
+
+    cout << "stream has been created!" << endl;  
+
+    // copy buffers to gpu
+    if (cudaMemcpyAsync(input_img_mem, (float*) netBuffer, netBufferSize / sizeof(float), cudaMemcpyHostToDevice, stream) != cudaSuccess)
+    {
+        cout << "error in copying data from host to device" << endl; 
+        return; 
+    }
+    if (cudaMemcpyAsync(calib_mem, calib, sizeof(calib), cudaMemcpyHostToDevice, stream) != cudaSuccess)
+    {
+        cout << "error in copying data from host to device" << endl; 
+        return; 
+    }
+    cout << "copied data from buffers" << endl; 
+
+    auto context = std::unique_ptr<nvinfer1::IExecutionContext>(mEngine->createExecutionContext()); 
+    
+    context->setTensorAddress("input_img", input_img_mem); 
+    context->setTensorAddress("calib", calib_mem); 
+    context->setTensorAddress("outputs", output_mem); 
+
+
+    bool status = context->enqueueV3(stream);
+
+    cout << "done, status is " << status << endl; 
+
+    float* outputBuffer = new float[outputSize];
+      if (cudaMemcpyAsync(outputBuffer, output_mem, outputSize, cudaMemcpyDeviceToHost, stream) != cudaSuccess)
+    {
+        cout << "error in copying back output to host" << endl; 
+        return; 
+    }
+    cout << "success in copying output to host" << endl; 
+    for (int i = 0; i < 84; ++i) { 
+        cout << sigmoid(outputBuffer[i]) << ' '; 
+    }
+    cout << endl; 
 }
 
 
