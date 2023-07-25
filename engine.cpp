@@ -113,13 +113,16 @@ void DriverMonitoring::infer(const std::string& inputFilename) {
     int netBufferSize = MODEL_HEIGHT * MODEL_WIDTH; 
     uint8_t* netBuffer = new uint8_t[netBufferSize];
 
-    int v_off = height - MODEL_HEIGHT;
-    int h_off = (width - MODEL_WIDTH) / 2;
-    cout << "h_off and v_off are " << h_off << ' ' << v_off << endl; 
+    // int v_off = height - MODEL_HEIGHT;
+    // int h_off = (width - MODEL_WIDTH) / 2;
+    // cout << "h_off and v_off are " << h_off << ' ' << v_off << endl; 
 
-    for (int r = 0; r < MODEL_HEIGHT; ++r) { 
-        memcpy(netBuffer + r * MODEL_WIDTH, streamBuffer + stride * v_off + r * stride + h_off, MODEL_WIDTH);
-    }
+    // for (int r = 0; r < MODEL_HEIGHT; ++r) { 
+    //     memcpy(netBuffer + r * MODEL_WIDTH, streamBuffer + stride * v_off + r * stride + h_off, MODEL_WIDTH);
+    // }
+
+    int sx = (width - MODEL_WIDTH) / 2;
+    int sy = (height - MODEL_HEIGHT) / 2;
 
     cout << "Resizing completed!" << endl; 
     FILE *dump_yuv_file = fopen("rawdump.yuv", "wb");
