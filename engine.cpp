@@ -79,6 +79,7 @@ float sigmoid(float x)
 
 void DriverMonitoring::infer(const std::string &inputFilename)
 {
+
     cv::Mat rgbImage = cv::imread(inputFilename, cv::IMREAD_COLOR);
     if (rgbImage.empty())
     {
