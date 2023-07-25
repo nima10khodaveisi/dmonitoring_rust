@@ -79,8 +79,6 @@ float sigmoid(float x)
 
 void DriverMonitoring::infer(const std::string &inputFilename)
 {
-    // auto context = std::unique_ptr<nvinfer1::IExecutionContext>(mEngine->createExecutionContext());
-
     cv::Mat rgbImage = cv::imread(inputFilename, cv::IMREAD_COLOR);
     if (rgbImage.empty())
     {
@@ -211,10 +209,7 @@ void DriverMonitoring::infer(const std::string &inputFilename)
     {
         cout << "error in copying back output to host" << endl;
         return;
-    }
-    cout << "success in copying output to host" << endl;
-    for (int person = 0; person < 2; ++person)
-    {
+    }outputBuffer
         int offset = person * 41;
         cout << "########## data for person=" << person + 1 << " ##########" << endl;
         int cur = 0;
