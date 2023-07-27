@@ -4,9 +4,9 @@ LDFLAGS = -L/usr/lib/x86_64-linux-gnu -L/usr/local/lib #$(shell pkg-config --lib
 LIBS = -lnvinfer -lopencv_imgproc -lopencv_imgcodecs $(shell pkg-config --cflags --libs opencv4)
 
 
-SOURCES = engine.cpp
+SOURCES = test.cpp
 OBJECTS = $(SOURCES:.cpp=.o)
-EXECUTABLE = engine
+EXECUTABLE = test
 
 all: $(EXECUTABLE)
 

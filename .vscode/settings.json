@@ -79,6 +79,10 @@
         "typeindex": "cpp",
         "typeinfo": "cpp",
         "valarray": "cpp",
-        "__nullptr": "cpp"
+        "__nullptr": "cpp",
+        "__node_handle": "cpp",
+        "queue": "cpp",
+        "regex": "cpp",
+        "stack": "cpp"
     }
 }
