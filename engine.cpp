@@ -41,7 +41,7 @@ class Logger : public ILogger
 class DriverMonitoring { 
     public: 
         DriverMonitoring(const std::string& engineFilename);
-        bool infer(const std::string& inputFile);
+        bool infer(uint8_t* input_buffer, const int width, const int height);
 
     private:
         std::string mEngineFilename;
@@ -103,77 +103,15 @@ string type2str(int type) {
   return "CV_" + r;
 }
 
-bool DriverMonitoring::infer(const std::string& inputFilename) { 
-
-    cv::Mat rgbImage = cv::imread(inputFilename, cv::IMREAD_COLOR); 
-    if (rgbImage.empty()) {
-        return false; 
+bool DriverMonitoring::infer(uint8_t* input_buffer, const int width, const int height) { // input_buffer contains data for yuv frame 
+    // normalized buffer
+    float* buffer = new float[width * height]; 
+    for (int i = 0; i < width * height; ++i) { 
+        float value = (int(input_buffer[i]) / 255.0); 
+        buffer[i] = value; 
     }
-
-    cout << "RGB image is fine " << rgbImage.size().width << ' ' << rgbImage.size().height << ' ' << rgbImage.channels() << endl; 
-
-    cv::Mat yuvImage; 
-    cv::cvtColor(rgbImage, yuvImage, cv::COLOR_BGR2YUV_I420); 
-
-    // Yuv image data 
-    int width = yuvImage.size().width; 
-    int height = yuvImage.size().height;
-    int stride = width; // This is because our picutre is completely inside the jpeg file
-
-    cout << "YUV image data " << width << ' ' << height << ' ' << yuvImage.channels() << endl; 
-    cout << "YUV desired size " << MODEL_WIDTH << ' ' << MODEL_HEIGHT << ' ' << yuvImage.channels() << endl; 
-
-    int streamBufferSize = width * height;
-    uint8_t* streamBuffer = new uint8_t[streamBufferSize]; 
-
-    std::memcpy(streamBuffer, yuvImage.data, streamBufferSize); 
-
-    FILE *sdump_yuv_file = fopen("rawdump_stream.yuv", "wb");
-    fwrite(streamBuffer, streamBufferSize, sizeof(uint8_t), sdump_yuv_file);
-    fclose(sdump_yuv_file);
-
-    cout << "Assigned buffer " << streamBufferSize << ' ' << yuvImage.total() << '\n';
-
-    int netBufferSize = MODEL_HEIGHT * MODEL_WIDTH; 
-    uint8_t* netBuffer = new uint8_t[netBufferSize];
-
-    // int v_off = height - MODEL_HEIGHT;
-    // int h_off = (width - MODEL_WIDTH) / 2;
-    // cout << "h_off and v_off are " << h_off << ' ' << v_off << endl; 
-
-    // for (int r = 0; r < MODEL_HEIGHT; ++r) { 
-    //     memcpy(netBuffer + r * MODEL_WIDTH, streamBuffer + stride * v_off + r * stride + h_off, MODEL_WIDTH);
-    // }
-
-    // This is the size of image such that dw * dh * 1.5 ~ 960 * 1440 
-    int dw = 1172; 
-    int dh = 884; 
-
-    int sx = (width - dw) / 2; 
-    int sy = (height - dh) / 2;
-
-    uint8_t *yStreamBuffer = streamBuffer + sy * width + sx; 
-
-    // copy y 
-    for (int r = 0; r < dh; ++r) { 
-        memcpy(netBuffer + r * dw, yStreamBuffer + width * r, dw); 
-    }
-
-    // copy u and v 
-    uint8_t *uNetBuffer = netBuffer + dw * dh; 
-    uint8_t *uStreamBuffer = streamBuffer + width * height + (sy / 2) * width ; 
-    uint8_t *vStreamBuffer = uStreamBuffer + (width / 2) * (height / 2); 
-    for (int r = 0; r < dh / 2; ++r) { 
-        // u 
-        memcpy(uNetBuffer + r * dw, uStreamBuffer + width * r + sx / 2, dw / 2); 
-        memcpy(uNetBuffer + (r + 1) * dw, vStreamBuffer + width * r + sx / 2, dw / 2); 
-    }
-
-    cout << "Resizing completed!" << endl; 
-    FILE *dump_yuv_file = fopen("rawdump.yuv", "wb");
-    fwrite(netBuffer, netBufferSize, sizeof(uint8_t), dump_yuv_file);
-    fclose(dump_yuv_file);
-
+    
+    
     // netBuffer is the pointer to the input for the model
     auto input_img_index = mEngine->getBindingIndex("input_img"); 
     if (input_img_index == -1) {
@@ -192,10 +130,10 @@ bool DriverMonitoring::infer(const std::string& inputFilename) {
 
 
     cout << "input_img_index and calib_index and output_index are " << input_img_index << ' ' << calib_index << ' ' << output_index << endl; 
-    float calib[] = {1.0, 2, 3};
+    float calib[] = {0.0, 0.0, 0.0};
 
     void* input_img_mem{nullptr};
-    if (cudaMalloc(&input_img_mem, netBufferSize * sizeof(float)) != cudaSuccess) { 
+    if (cudaMalloc(&input_img_mem, sizeof(buffer)) != cudaSuccess) { 
         cout << "Can not assign mem in cuda" << endl;
         return false; 
     }
@@ -225,7 +163,7 @@ bool DriverMonitoring::infer(const std::string& inputFilename) {
     cout << "stream has been created!" << endl;  
 
     // copy buffers to gpu
-    if (cudaMemcpyAsync(input_img_mem, (float*) netBuffer, netBufferSize / sizeof(float), cudaMemcpyHostToDevice, stream) != cudaSuccess)
+    if (cudaMemcpyAsync(input_img_mem, buffer, sizeof(buffer), cudaMemcpyHostToDevice, stream) != cudaSuccess)
     {
         cout << "error in copying data from host to device" << endl; 
         return false; 
@@ -255,8 +193,8 @@ bool DriverMonitoring::infer(const std::string& inputFilename) {
         return false; 
     }
     cout << "success in copying output to host" << endl; 
-    return true; 
-    for (int person = 0; person < 2; ++person) { 
+    // return true; 
+    for (int person = 0; person < 1; ++person) { 
         int offset = person * 41;
         cout << "########## data for person=" << person + 1 << " ##########" << endl;  
         int cur = 0;  
@@ -347,6 +285,8 @@ int main(int argc, char* argv[]) {
 
     cout << "width and height of video are " << frame_width << ' ' << frame_height << endl; 
 
+    DriverMonitoring dm = DriverMonitoring("dmonitoring_model.engine"); 
+
     while (true) { 
         cv::Mat rgb_frame; 
         cap >> rgb_frame;
@@ -367,13 +307,15 @@ int main(int argc, char* argv[]) {
         cv::Mat yuv_frame; 
         cv::cvtColor(rgb_frame, yuv_frame, cv::COLOR_BGR2YUV_I420); 
 
-        cout << "this is yuv frame size " << yuv_frame.size() << type2str(yuv_frame.type()) << endl;  
+        cout << "this is yuv frame size " << yuv_frame.size() << ' ' << type2str(yuv_frame.type()) << endl;  
 
 
         const int buffer_size = int(frame_width * frame_height * 1.5);
         uint8_t* buffer = new uint8_t[buffer_size]; 
 
         std::memcpy(buffer, yuv_frame.data, buffer_size); 
+
+        dm.infer(buffer, frame_width, frame_height);
 
         // FILE *sdump_yuv_file = fopen("frame.yuv", "wb");
         // fwrite(buffer, 640 * 720, sizeof(uint8_t), sdump_yuv_file);
