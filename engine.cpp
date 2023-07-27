@@ -105,12 +105,14 @@ string type2str(int type) {
 
 bool DriverMonitoring::infer(uint8_t* input_buffer, const int width, const int height) { // input_buffer contains data for yuv frame 
     // normalized buffer
-    float* buffer = new float[width * height]; 
-    for (int i = 0; i < width * height; ++i) { 
+    const int buffer_size = width * height; 
+    float* buffer = new float[buffer_size]; 
+    for (int i = 0; i < buffer_size; ++i) { 
         float value = (int(input_buffer[i]) / 255.0); 
         buffer[i] = value; 
     }
     
+    cout << "this is buffer size " << buffer_size << ' ' << sizeof(float) << ' ' << buffer_size * sizeof(float) << endl; 
     
     // netBuffer is the pointer to the input for the model
     auto input_img_index = mEngine->getBindingIndex("input_img"); 
@@ -133,12 +135,12 @@ bool DriverMonitoring::infer(uint8_t* input_buffer, const int width, const int h
     float calib[] = {0.0, 0.0, 0.0};
 
     void* input_img_mem{nullptr};
-    if (cudaMalloc(&input_img_mem, sizeof(buffer)) != cudaSuccess) { 
+    if (cudaMalloc(&input_img_mem, buffer_size * sizeof(float)) != cudaSuccess) { 
         cout << "Can not assign mem in cuda" << endl;
         return false; 
     }
     void* calib_mem{nullptr};
-    if (cudaMalloc(&calib_mem, sizeof(calib) * sizeof(float)) != cudaSuccess) { 
+    if (cudaMalloc(&calib_mem, 3 * sizeof(float)) != cudaSuccess) { 
         cout << "Can not assign mem in cuda" << endl;
         return false; 
     }
@@ -146,9 +148,9 @@ bool DriverMonitoring::infer(uint8_t* input_buffer, const int width, const int h
 
     void* output_mem{nullptr}; 
     auto outputDims = mEngine->getBindingDimensions(output_index);
-    auto outputSize = accumulate(outputDims.d, outputDims.d + outputDims.nbDims, 1, std::multiplies<int64_t>()) * sizeof(float); 
+    auto outputSize = accumulate(outputDims.d, outputDims.d + outputDims.nbDims, 1, std::multiplies<int64_t>()); 
     
-    if (cudaMalloc(&output_mem, outputSize) != cudaSuccess) { 
+    if (cudaMalloc(&output_mem, outputSize * sizeof(float)) != cudaSuccess) { 
         return false; 
     }
     cout << "Successfuly assigned mem to output in cuda" << endl; 
@@ -160,17 +162,19 @@ bool DriverMonitoring::infer(uint8_t* input_buffer, const int width, const int h
         return false;
     }
 
-    cout << "stream has been created!" << endl;  
+    // return true;
+
+    cout << "stream has been created!" << endl;
 
     // copy buffers to gpu
-    if (cudaMemcpyAsync(input_img_mem, buffer, sizeof(buffer), cudaMemcpyHostToDevice, stream) != cudaSuccess)
+    if (cudaMemcpyAsync(input_img_mem, buffer, buffer_size * sizeof(float), cudaMemcpyHostToDevice, stream) != cudaSuccess)
     {
-        cout << "error in copying data from host to device" << endl; 
+        cout << "error in copying buffer from host to device" << endl; 
         return false; 
     }
-    if (cudaMemcpyAsync(calib_mem, calib, sizeof(calib), cudaMemcpyHostToDevice, stream) != cudaSuccess)
+    if (cudaMemcpyAsync(calib_mem, calib, 3 * sizeof(float), cudaMemcpyHostToDevice, stream) != cudaSuccess)
     {
-        cout << "error in copying data from host to device" << endl; 
+        cout << "error in copying calib from host to device" << endl; 
         return false; 
     }
     cout << "copied data from buffers" << endl; 
@@ -181,13 +185,13 @@ bool DriverMonitoring::infer(uint8_t* input_buffer, const int width, const int h
     context->setTensorAddress("calib", calib_mem); 
     context->setTensorAddress("outputs", output_mem); 
 
-
     bool status = context->enqueueV3(stream);
 
-    cout << "done, status is " << status << endl; 
+    cout << "done, status is " << status << ' ' << sizeof(output_mem) << ' ' << sizeof(buffer) << endl;
+ 
 
     float* outputBuffer = new float[outputSize];
-      if (cudaMemcpyAsync(outputBuffer, output_mem, outputSize, cudaMemcpyDeviceToHost, stream) != cudaSuccess)
+    if (cudaMemcpyAsync(outputBuffer, output_mem, outputSize * sizeof(float), cudaMemcpyDeviceToHost, stream) != cudaSuccess)
     {
         cout << "error in copying back output to host" << endl; 
         return false; 
@@ -315,7 +319,7 @@ int main(int argc, char* argv[]) {
 
         std::memcpy(buffer, yuv_frame.data, buffer_size); 
 
-        dm.infer(buffer, frame_width, frame_height);
+        dm.infer(buffer, yuv_frame.size().width, yuv_frame.size().height);
 
         // FILE *sdump_yuv_file = fopen("frame.yuv", "wb");
         // fwrite(buffer, 640 * 720, sizeof(uint8_t), sdump_yuv_file);
