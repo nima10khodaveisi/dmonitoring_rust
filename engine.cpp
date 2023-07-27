@@ -10,6 +10,7 @@
 // #include <opencv2/opencv.hpp>
 #include "opencv2/imgcodecs.hpp"
 #include <opencv2/opencv.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
 
 #include "NvInfer.h"
 #include <cuda_runtime.h>
@@ -85,7 +86,7 @@ string type2str(int type) {
   uchar depth = type & CV_MAT_DEPTH_MASK;
   uchar chans = 1 + (type >> CV_CN_SHIFT);
 
-  switch ( depth ) {
+  switch (depth) {
     case CV_8U:  r = "8U"; break;
     case CV_8S:  r = "8S"; break;
     case CV_16U: r = "16U"; break;
@@ -99,7 +100,7 @@ string type2str(int type) {
   r += "C";
   r += (chans+'0');
 
-  return r;
+  return "CV_" + r;
 }
 
 bool DriverMonitoring::infer(const std::string& inputFilename) { 
@@ -310,7 +311,7 @@ bool DriverMonitoring::infer(const std::string& inputFilename) {
 
 
 int main(int argc, char* argv[]) { 
-    string inputFileName = "interior_center_day.mkv";
+    string inputFileName = "resized.mkv";
     if (argc < 2) {
         cout << "running using default args, --input=test.jpg, to change this you can run the code with ./engine --input=foo.bar" << endl; 
     } else { 
@@ -346,26 +347,13 @@ int main(int argc, char* argv[]) {
 
     cout << "width and height of video are " << frame_width << ' ' << frame_height << endl; 
 
-    int cnt = 0; 
-
     while (true) { 
-        cv::Mat rgb_frame, y_plane, u_plane, v_plane; 
-        cap >> rgb_frame; 
+        cv::Mat rgb_frame; 
+        cap >> rgb_frame;
 
         cout << "this is frame size " << rgb_frame.size() << ' ' << type2str(rgb_frame.type()) << endl; 
 
         // resize rgb image to 1152 * 800 then width * height * 1.5 = 1440 * 960 
-        cout << "shit" << endl; 
-        cv::Mat rgb_resized = cv::Mat(800, 1152, 16);  
-        cout << "done " << endl; 
-        cout << rgb_resized.size() << ' ' << type2str(rgb_resized.type()) << endl; 
-        cout << "wow " << endl; 
-        auto sz = cv::Size((int)1152, (int)800); 
-        cout << "oh oh oh" << endl; 
-        cv::resize(rgb_frame, rgb_resized, cv::Size(), 0.5, 0.5, cv::INTER_LINEAR);
-        cout << "eeee" << endl;  
-        cout << "done " << rgb_resized.size() << ' ' << type2str(rgb_resized.type()) << endl; 
-
         /* 
             frame is bgr, we have to convert it to yuv.
             we can try to read the video from yuv format directly. 
@@ -375,20 +363,21 @@ int main(int argc, char* argv[]) {
         if (rgb_frame.empty()) { 
             break; 
         }
-        ++cnt; 
 
         cv::Mat yuv_frame; 
         cv::cvtColor(rgb_frame, yuv_frame, cv::COLOR_BGR2YUV_I420); 
 
         cout << "this is yuv frame size " << yuv_frame.size() << type2str(yuv_frame.type()) << endl;  
 
-        uint8_t* buffer = new uint8_t[640 * 720]; 
 
-        std::memcpy(buffer, yuv_frame.data, 640 * 720); 
+        const int buffer_size = int(frame_width * frame_height * 1.5);
+        uint8_t* buffer = new uint8_t[buffer_size]; 
 
-        FILE *sdump_yuv_file = fopen("frame.yuv", "wb");
-        fwrite(buffer, 640 * 720, sizeof(uint8_t), sdump_yuv_file);
-        fclose(sdump_yuv_file);
+        std::memcpy(buffer, yuv_frame.data, buffer_size); 
+
+        // FILE *sdump_yuv_file = fopen("frame.yuv", "wb");
+        // fwrite(buffer, 640 * 720, sizeof(uint8_t), sdump_yuv_file);
+        // fclose(sdump_yuv_file);
   
 
         // cv::imwrite("frame.jpg", frame);
@@ -411,8 +400,6 @@ int main(int argc, char* argv[]) {
 
         break; 
     }
-
-    // cout << "this is number of frames: " << cnt << ' ' << total_frames << endl; 
 
 
     // DriverMonitoring dm = DriverMonitoring("dmonitoring_model.engine"); 
