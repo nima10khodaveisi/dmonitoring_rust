@@ -7,7 +7,6 @@ import onnxruntime as ort
 
 ONNX_FILE_NAME = "dmonitoring_model.onnx"
 
-# image = np.random.random_sample((1440, 960)).astype('float32').reshape(1, -1)
 ort_sess = ort.InferenceSession(ONNX_FILE_NAME)
 # get image from resized video
 cap = cv2.VideoCapture('resized.mkv')
