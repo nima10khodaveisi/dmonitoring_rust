@@ -18,9 +18,29 @@
 using namespace std; 
 using namespace nvinfer1; 
 
+#define REG_SCALE 0.25f
+
 
 const int MODEL_WIDTH = 1440; 
 const int MODEL_HEIGHT = 960; 
+
+typedef struct DriverStateResult {
+  float face_orientation[3];
+  float face_orientation_std[3];
+  float face_position[2];
+  float face_position_std[2];
+  float face_prob;
+  float left_eye_prob;
+  float right_eye_prob;
+  float left_blink_prob;
+  float right_blink_prob;
+  float sunglasses_prob;
+  float occluded_prob;
+  float touching_wheel_prob;
+  float paying_attention_prob; 
+  float using_phone_prob;
+  float distracted_prob; 
+} DriverStateResult;
 
 
 // I copied this from https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#c_topics
@@ -41,7 +61,7 @@ class Logger : public ILogger
 class DriverMonitoring { 
     public: 
         DriverMonitoring(const std::string& engineFilename);
-        bool infer(float* buffer, const int buffer_size);
+        DriverStateResult infer(float* buffer, const int buffer_size);
 
     private:
         std::string mEngineFilename;
@@ -103,22 +123,23 @@ string type2str(int type) {
   return "CV_" + r;
 }
 
-bool DriverMonitoring::infer(float* buffer, const int buffer_size) { // input_buffer contains data for yuv frame 
-    
+DriverStateResult DriverMonitoring::infer(float* buffer, const int buffer_size) { // input_buffer contains data for yuv frame 
+    DriverStateResult model_res = {0}; 
+
     // netBuffer is the pointer to the input for the model
     auto input_img_index = mEngine->getBindingIndex("input_img"); 
     if (input_img_index == -1) {
-        return false; 
+        return model_res; 
     }
 
     auto calib_index = mEngine->getBindingIndex("calib"); 
     if (calib_index == -1) { 
-        return false; 
+        return model_res; 
     }
     
     auto output_index = mEngine->getBindingIndex("outputs"); 
     if (output_index == -1) { 
-        return false; 
+        return model_res; 
     }
 
 
@@ -128,12 +149,12 @@ bool DriverMonitoring::infer(float* buffer, const int buffer_size) { // input_bu
     void* input_img_mem{nullptr};
     if (cudaMalloc(&input_img_mem, buffer_size * sizeof(float)) != cudaSuccess) { 
         cout << "Can not assign mem in cuda" << endl;
-        return false; 
+        return model_res; 
     }
     void* calib_mem{nullptr};
     if (cudaMalloc(&calib_mem, 3 * sizeof(float)) != cudaSuccess) { 
         cout << "Can not assign mem in cuda" << endl;
-        return false; 
+        return model_res; 
     }
     cout << "Successfuly assigned mem to input in cuda" << endl; 
 
@@ -142,7 +163,7 @@ bool DriverMonitoring::infer(float* buffer, const int buffer_size) { // input_bu
     auto outputSize = accumulate(outputDims.d, outputDims.d + outputDims.nbDims, 1, std::multiplies<int64_t>()); 
     
     if (cudaMalloc(&output_mem, outputSize * sizeof(float)) != cudaSuccess) { 
-        return false; 
+        return model_res; 
     }
     cout << "Successfuly assigned mem to output in cuda" << endl; 
 
@@ -150,7 +171,7 @@ bool DriverMonitoring::infer(float* buffer, const int buffer_size) { // input_bu
     if (cudaStreamCreate(&stream) != cudaSuccess)
     {
         cout << "cuda stream creation failed." << std::endl;
-        return false;
+        return model_res;
     }
 
     // return true;
@@ -161,12 +182,12 @@ bool DriverMonitoring::infer(float* buffer, const int buffer_size) { // input_bu
     if (cudaMemcpyAsync(input_img_mem, buffer, buffer_size * sizeof(float), cudaMemcpyHostToDevice, stream) != cudaSuccess)
     {
         cout << "error in copying buffer from host to device" << endl; 
-        return false; 
+        return model_res; 
     }
     if (cudaMemcpyAsync(calib_mem, calib, 3 * sizeof(float), cudaMemcpyHostToDevice, stream) != cudaSuccess)
     {
         cout << "error in copying calib from host to device" << endl; 
-        return false; 
+        return model_res; 
     }
     cout << "copied data from buffers" << endl; 
 
@@ -185,61 +206,63 @@ bool DriverMonitoring::infer(float* buffer, const int buffer_size) { // input_bu
     if (cudaMemcpyAsync(output_buffer, output_mem, outputSize * sizeof(float), cudaMemcpyDeviceToHost, stream) != cudaSuccess)
     {
         cout << "error in copying back output to host" << endl; 
-        return false; 
+        return model_res; 
     }
     cout << "success in copying output to host" << endl; 
     cout << (output_buffer[3] * 0.25f) << ' ' << (output_buffer[4] * 0.25f) << endl; 
-    return true; 
-    /*
+    
     for (int person = 0; person < 1; ++person) { 
         int offset = person * 41;
         cout << "########## data for person=" << person + 1 << " ##########" << endl;  
         int cur = 0;  
         for (int d = 0; d < 3; ++d) { 
-            cout << "face orientition " << outputBuffer[offset + cur++] << endl; 
+            model_res.face_orientation[d] = output_buffer[offset + cur++]; 
         }
-        for (int d = 0; d < 2; ++d) { 
-            cout << "face position " << outputBuffer[offset + cur++] << endl; 
-        }
-        cout << "normalized face " << outputBuffer[offset + cur++] << endl; 
-        for (int d = 0; d < 3; ++d) { 
-            cout << "std face orientition " << outputBuffer[offset + cur++] << endl; 
-        }
-        for (int d = 0; d < 2; ++d) { 
-            cout << "std face position " << outputBuffer[offset + cur++] << endl; 
-        }
-        cout << "std normalized face " << outputBuffer[offset + cur++] << endl; 
+
+        cout << "face " << output_buffer[offset + cur] * REG_SCALE << endl;
+        model_res.face_position[0] = (output_buffer[offset + cur++] * REG_SCALE + 0.5) * MODEL_WIDTH;
+        model_res.face_position[1] = (output_buffer[offset + cur++] * REG_SCALE + 0.5) * MODEL_HEIGHT;
         
-        cout << "face visible probability " << sigmoid(outputBuffer[offset + cur++]) << endl;
+        cout << "normalized face " << output_buffer[offset + cur++] << endl; 
+        ++cur; 
+        for (int d = 0; d < 3; ++d) { 
+            model_res.face_orientation[d] = output_buffer[offset + cur++];
+        }
+        for (int d = 0; d < 2; ++d) { 
+            model_res.face_orientation[d] = output_buffer[offset + cur++];
+        }
+        cout << "std normalized face " << output_buffer[offset + cur++] << endl; 
+        
+        model_res.face_prob = sigmoid(output_buffer[offset + cur++]);
 
         for (int eye = 0; eye < 2; ++eye) { 
             cout << "===== data for " << (eye == 0 ? "left": "right") << " eye =====" << endl; 
             for (int d = 0; d < 2; ++d) { 
-                cout << "eye position " << outputBuffer[offset + cur++] << endl; 
+                cout << "eye position " << output_buffer[offset + cur++] << endl; 
             }
             for (int d = 0; d < 2; ++d) { 
-                cout << "eye size " << outputBuffer[offset + cur++] << endl; 
+                cout << "eye size " << output_buffer[offset + cur++] << endl; 
             }
             for (int d = 0; d < 2; ++d) { 
-                cout << "std eye position " << outputBuffer[offset + cur++] << endl; 
+                cout << "std eye position " << output_buffer[offset + cur++] << endl; 
             }
             for (int d = 0; d < 2; ++d) { 
-                cout << "std eye size " << outputBuffer[offset + cur++] << endl; 
+                cout << "std eye size " << output_buffer[offset + cur++] << endl; 
             }
-            cout << "eye visible probability " << sigmoid(outputBuffer[offset + cur++]) << endl; 
-            cout << "eye closed probability " << sigmoid(outputBuffer[offset + cur++]) << endl; 
+            (eye == 0? model_res.left_eye_prob: model_res.right_eye_prob) = sigmoid(output_buffer[offset + cur++]);
+            (eye == 0? model_res.left_blink_prob: model_res.right_blink_prob) = sigmoid(output_buffer[offset + cur++]);
         }
         cout << "======================" << endl; 
-        cout << "wearing sunglass probabilty " << sigmoid(outputBuffer[offset + cur++]) << endl; 
-        cout << "face occlueded probability " << sigmoid(outputBuffer[offset + cur++]) << endl; 
-        cout << "touching wheel probability " << sigmoid(outputBuffer[offset + cur++]) << endl; 
-        cout << "paying attention probability " << sigmoid(outputBuffer[offset + cur++]) << endl; 
+        model_res.sunglasses_prob = sigmoid(output_buffer[offset + cur++]);
+        model_res.occluded_prob = sigmoid(output_buffer[offset + cur++]);
+        model_res.touching_wheel_prob = sigmoid(output_buffer[offset + cur++]);
+        model_res.paying_attention_prob = sigmoid(output_buffer[offset + cur++]);  
         cur += 2; // ignore deprecated 
-        cout << "using phone probability " << sigmoid(outputBuffer[offset + cur++]) << endl;
-        cout << "distracted probablity " << sigmoid(outputBuffer[offset + cur++]) << endl; 
+        model_res.using_phone_prob =  sigmoid(output_buffer[offset + cur++]);
+        model_res.distracted_prob = sigmoid(output_buffer[offset + cur++]);
         cout << "###################################################" << endl; 
     }
-    return true; */
+    return model_res;
 }
 
 
@@ -272,6 +295,8 @@ int main(int argc, char* argv[]) {
     int total_frames = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_COUNT));
 
     cout << "width and height of video are " << frame_width << ' ' << frame_height << endl; 
+
+    cv::VideoWriter video("result.mkv", cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), fps, cv::Size(1440, 960));
 
     DriverMonitoring dm = DriverMonitoring("dmonitoring_model.engine"); 
 
@@ -308,38 +333,28 @@ int main(int argc, char* argv[]) {
 
         std::memcpy(buffer, y.data, buffer_size); 
 
-        dm.infer(buffer, buffer_size);
+        DriverStateResult res = dm.infer(buffer, buffer_size);
 
-        // FILE *sdump_yuv_file = fopen("frame.yuv", "wb");
-        // fwrite(buffer, 640 * 720, sizeof(uint8_t), sdump_yuv_file);
-        // fclose(sdump_yuv_file);
-  
+        vector<string> frame_data = {
+            "using_phone_prob: " + to_string(res.using_phone_prob),
+            "sunglasses_prob: " + to_string(res.sunglasses_prob),
+            "distracted_prob: " + to_string(res.distracted_prob)
+        };
 
-        // cv::imwrite("frame.jpg", frame);
+        for (size_t i = 0; i < frame_data.size(); ++i) {
+            cv::Size textSize = cv::getTextSize(frame_data[i], cv::FONT_HERSHEY_SIMPLEX, 1.0, 2, 0);
 
-        // std::vector<cv::Mat> planes;
-        // cv::split(frame, planes);
-        // y_plane = planes[0];
-        // u_plane = planes[1];
-        // v_plane = planes[2];
+            int x = 50;
+            int y = (i + 1) * (textSize.height + 50);
 
-        // uint8_t* streamBuffer = new uint8_t[640 * 480]; 
+            cv::putText(resized_frame, frame_data[i], cv::Point(x, y), cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 255, 0), 2);
+        }
+        cv::circle(resized_frame, cv::Point(res.face_position[0], res.face_position[1]), 70, cv::Scalar(0, 0, 255), 10);
 
-        // std::memcpy(streamBuffer, y_plane.data, 640 * 480); 
+        video.write(resized_frame); 
 
-        // FILE *sdump_yuv_file = fopen("frame.yuv", "wb");
-        // fwrite(streamBuffer, 640 * 480, sizeof(uint8_t), sdump_yuv_file);
-        // fclose(sdump_yuv_file);
-
-        // cout << u_plane.size() << ' ' << v_plane.size() << endl; 
-
-        break; 
+        // break; 
     }
 
-
-    // DriverMonitoring dm = DriverMonitoring("dmonitoring_model.engine"); 
-    // bool status = dm.infer(inputFileName);
-    // if (!status) { 
-    //     cout << "some error happened" << endl; // todo: show the error exactly!
-    // }
+    video.release();
 }
