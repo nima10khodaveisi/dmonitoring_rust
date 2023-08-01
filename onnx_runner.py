@@ -1,4 +1,3 @@
-import onnx
 import cv2
 
 import numpy as np
@@ -48,6 +47,8 @@ while True:
 
     print(output[3] * 0.25, output[4] * 0.25)
     print(driver_face_x, driver_face_y)
+
+    # put the a circle on the driver's face
     output_image = cv2.circle(frame, (driver_face_x, driver_face_y), radius=70, color=(0, 0, 255), thickness=10)
 
     cv2.imshow('frame', output_image)
