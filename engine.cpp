@@ -86,8 +86,6 @@ DriverMonitoring::DriverMonitoring(const std::string& engineFilename): mEngine(n
     std::vector<char> engineData(fsize); 
     engineFile.read(engineData.data(), fsize); 
 
-    std::cout << "This is the size of engine file: " << fsize << " " << engineData.size() << endl; 
-
     // std::unique_ptr<nvinfer1::IRuntime> runtiسme{nvinfer1::createInferRuntime(logger)}; 
     nvinfer1::IRuntime* runtime = nvinfer1::createInferRuntime(logger);
     mEngine.reset(runtime->deserializeCudaEngine(engineData.data(), fsize, nullptr)); 
@@ -220,8 +218,8 @@ DriverStateResult DriverMonitoring::infer(float* buffer, const int buffer_size) 
         }
 
         cout << "face " << output_buffer[offset + cur] * REG_SCALE << endl;
-        model_res.face_position[0] = (output_buffer[offset + cur++] * REG_SCALE + 0.5) * MODEL_WIDTH;
-        model_res.face_position[1] = (output_buffer[offset + cur++] * REG_SCALE + 0.5) * MODEL_HEIGHT;
+        model_res.face_position[0] = (output_buffer[offset + cur++] * REG_SCALE + 0.54) * MODEL_WIDTH; // this is a little hack
+        model_res.face_position[1] = (output_buffer[offset + cur++] * REG_SCALE + 0.5 - 0.28) * MODEL_HEIGHT;
         
         cout << "normalized face " << output_buffer[offset + cur++] << endl; 
         ++cur; 
@@ -303,8 +301,6 @@ int main(int argc, char* argv[]) {
     while (true) { 
         cv::Mat rgb_frame; 
         cap >> rgb_frame;
-
-        cout << "this is frame size " << rgb_frame.size() << ' ' << type2str(rgb_frame.type()) << endl; 
         
         if (rgb_frame.empty()) { 
             break; 
@@ -312,17 +308,13 @@ int main(int argc, char* argv[]) {
 
         cv::Mat resized_frame;
         cv::resize(rgb_frame, resized_frame, cv::Size(1440, 960));
-        cout << "this is resized frame size " << resized_frame.size() << endl; 
 
         cv::Mat yuv_frame; 
         cv::cvtColor(resized_frame, yuv_frame, cv::COLOR_BGR2YUV); 
 
-        cout << "this is yuv frame size " << yuv_frame.size() << ' ' << type2str(yuv_frame.type()) << endl; 
-
         std::vector<cv::Mat> channels;
         cv::split(yuv_frame, channels); 
         cv::Mat y = channels[0];
-        cout << "this is y shape " << y.size() << endl; 
 
         y.convertTo(y, CV_32F); //convert to float32
         y /= 255.;
@@ -338,7 +330,8 @@ int main(int argc, char* argv[]) {
         vector<string> frame_data = {
             "using_phone_prob: " + to_string(res.using_phone_prob),
             "sunglasses_prob: " + to_string(res.sunglasses_prob),
-            "distracted_prob: " + to_string(res.distracted_prob)
+            "distracted_prob: " + to_string(res.distracted_prob),
+            "touching_wheel_prob: " + to_string(res.touching_wheel_prob),
         };
 
         for (size_t i = 0; i < frame_data.size(); ++i) {
@@ -353,7 +346,6 @@ int main(int argc, char* argv[]) {
 
         video.write(resized_frame); 
 
-        // break; 
     }
 
     video.release();
